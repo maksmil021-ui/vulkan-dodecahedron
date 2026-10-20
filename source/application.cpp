@@ -283,7 +283,12 @@ namespace application {
     void update([[maybe_unused]] double time) {
         static float rotationAngle = 0.0f;
         static float scaleFactor = 0.6f;
+        static bool isPaused = false;
 
+        ImGui::Checkbox("Slow down animation", &isPaused);
+        if (!isPaused) {
+            rotationAngle += 0.01f;
+        }
         ImGui::Begin("Dodecahedron Controls");
         ImGui::SliderFloat("Rotation", &rotationAngle, 0.0f, 6.28f);
         ImGui::SliderFloat("Scale", &scaleFactor, 0.1f, 2.0f);
