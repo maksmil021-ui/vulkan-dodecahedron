@@ -1,0 +1,10 @@
+build-*/
+shaders/*.spv
+imgui.ini
+out/
+.vs/
+x64/
+*.spv
+*.user
+*.sln
+CMakeUserPresets.json
