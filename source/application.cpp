@@ -1,5 +1,6 @@
 #include "application.hpp"
 #include "graphics_internal.hpp"
+#include <vk_mem_alloc.h>
 #include <imgui.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -10,7 +11,6 @@
 #include <cmath>
 
 VkPipeline pipelineFill = VK_NULL_HANDLE;
-VkPipeline pipelineWire = VK_NULL_HANDLE;
 VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
 VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
 VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
@@ -25,6 +25,7 @@ struct UniformBufferObject {
     glm::mat4 model;
     glm::mat4 view;
     glm::mat4 proj;
+    glm::vec4 uiColor;
 };
 
 void createDodecahedron(std::vector<float>& vertices, std::vector<uint32_t>& indices) {
@@ -58,19 +59,16 @@ void createDodecahedron(std::vector<float>& vertices, std::vector<uint32_t>& ind
         glm::vec3 p0 = pos[indices[i]];
         glm::vec3 p1 = pos[indices[i + 1]];
         glm::vec3 p2 = pos[indices[i + 2]];
-
         glm::vec3 normal = glm::normalize(glm::cross(p1 - p0, p2 - p0));
-
-        size_t faceIndex = i / 9;
-
-        float r = 0.2f + 0.8f * ((faceIndex * 3) % 7) / 7.0f;
-        float g = 0.2f + 0.8f * ((faceIndex * 5) % 7) / 7.0f;
-        float b = 0.2f + 0.8f * ((faceIndex * 7) % 7) / 7.0f;
 
         for (int j = 0; j < 3; ++j) {
             glm::vec3 p = pos[indices[i + j]];
             vertices.push_back(p.x); vertices.push_back(p.y); vertices.push_back(p.z);
             vertices.push_back(normal.x); vertices.push_back(normal.y); vertices.push_back(normal.z);
+
+            float r = (p.x + 1.5f) / 3.0f;
+            float g = (p.y + 1.5f) / 3.0f;
+            float b = (p.z + 1.5f) / 3.0f;
             vertices.push_back(r); vertices.push_back(g); vertices.push_back(b);
         }
     }
@@ -94,89 +92,6 @@ VkShaderModule createShaderModule(const std::vector<char>& code) {
     VkShaderModule shaderModule;
     vkCreateShaderModule(graphics::internal::context.device, &createInfo, nullptr, &shaderModule);
     return shaderModule;
-}
-
-VkPipeline createPipeline(VkShaderModule vertModule, VkShaderModule fragModule, VkPolygonMode polyMode) {
-    auto& ctx = graphics::internal::context;
-
-    VkPipelineShaderStageCreateInfo shaderStages[2]{};
-    shaderStages[0] = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
-    shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-    shaderStages[0].module = vertModule;
-    shaderStages[0].pName = "main";
-
-    shaderStages[1] = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
-    shaderStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    shaderStages[1].module = fragModule;
-    shaderStages[1].pName = "main";
-
-    VkVertexInputBindingDescription bindingDesc{ 0, 9 * sizeof(float), VK_VERTEX_INPUT_RATE_VERTEX };
-    VkVertexInputAttributeDescription attrDesc[3]{};
-    attrDesc[0] = { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0 };
-    attrDesc[1] = { 1, 0, VK_FORMAT_R32G32B32_SFLOAT, 3 * sizeof(float) };
-    attrDesc[2] = { 2, 0, VK_FORMAT_R32G32B32_SFLOAT, 6 * sizeof(float) };
-
-    VkPipelineVertexInputStateCreateInfo vertexInputInfo{ VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
-    vertexInputInfo.vertexBindingDescriptionCount = 1;
-    vertexInputInfo.pVertexBindingDescriptions = &bindingDesc;
-    vertexInputInfo.vertexAttributeDescriptionCount = 3;
-    vertexInputInfo.pVertexAttributeDescriptions = attrDesc;
-
-    VkPipelineInputAssemblyStateCreateInfo inputAssembly{ VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
-    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-
-    VkPipelineViewportStateCreateInfo viewportState{ VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
-    viewportState.viewportCount = 1;
-    viewportState.scissorCount = 1;
-
-    VkPipelineRasterizationStateCreateInfo rasterizer{ VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
-    rasterizer.polygonMode = polyMode;
-    rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-
-    VkPipelineMultisampleStateCreateInfo multisampling{ VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
-    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-    VkPipelineDepthStencilStateCreateInfo depthStencil{ VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
-    depthStencil.depthTestEnable = VK_TRUE;
-    depthStencil.depthWriteEnable = VK_TRUE;
-    depthStencil.depthCompareOp = (polyMode == VK_POLYGON_MODE_LINE) ? VK_COMPARE_OP_LESS_OR_EQUAL : VK_COMPARE_OP_LESS;
-    depthStencil.depthBoundsTestEnable = VK_FALSE;
-    depthStencil.stencilTestEnable = VK_FALSE;
-
-    VkPipelineColorBlendAttachmentState colorBlendAttachment{};
-    colorBlendAttachment.colorWriteMask = 0xF;
-
-    VkPipelineColorBlendStateCreateInfo colorBlending{ VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
-    colorBlending.attachmentCount = 1;
-    colorBlending.pAttachments = &colorBlendAttachment;
-
-    VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
-    VkPipelineDynamicStateCreateInfo dynamicState{ VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
-    dynamicState.dynamicStateCount = 2;
-    dynamicState.pDynamicStates = dynamicStates;
-
-    VkGraphicsPipelineCreateInfo pipelineInfo{ VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
-    pipelineInfo.stageCount = 2;
-    pipelineInfo.pStages = shaderStages;
-    pipelineInfo.pVertexInputState = &vertexInputInfo;
-    pipelineInfo.pInputAssemblyState = &inputAssembly;
-    pipelineInfo.pViewportState = &viewportState;
-    pipelineInfo.pRasterizationState = &rasterizer;
-    pipelineInfo.pMultisampleState = &multisampling;
-    pipelineInfo.pDepthStencilState = &depthStencil;
-    pipelineInfo.pColorBlendState = &colorBlending;
-    pipelineInfo.pDynamicState = &dynamicState;
-    pipelineInfo.layout = pipelineLayout;
-    pipelineInfo.renderPass = ctx.render_pass;
-    pipelineInfo.subpass = 0;
-
-    VkPipeline pipeline;
-    if (vkCreateGraphicsPipelines(ctx.device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline) != VK_SUCCESS) {
-        std::cerr << "Failed to create pipeline!" << std::endl;
-    }
-    return pipeline;
 }
 
 namespace application {
@@ -214,7 +129,7 @@ namespace application {
         uboLayoutBinding.binding = 0;
         uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         uboLayoutBinding.descriptorCount = 1;
-        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
         VkDescriptorSetLayoutCreateInfo layoutInfo{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
         layoutInfo.bindingCount = 1;
@@ -243,23 +158,95 @@ namespace application {
         descriptorWrite.pBufferInfo = &bufferDescInfo;
         vkUpdateDescriptorSets(ctx.device, 1, &descriptorWrite, 0, nullptr);
 
+        auto vertCode = readFile("shaders/dodecahedron.vert.spv");
+        auto fragCode = readFile("shaders/dodecahedron.frag.spv");
+
+        VkShaderModule vertModule = createShaderModule(vertCode);
+        VkShaderModule fragModule = createShaderModule(fragCode);
+
+        VkPipelineShaderStageCreateInfo shaderStages[2]{};
+        shaderStages[0] = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
+        shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+        shaderStages[0].module = vertModule;
+        shaderStages[0].pName = "main";
+
+        shaderStages[1] = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
+        shaderStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        shaderStages[1].module = fragModule;
+        shaderStages[1].pName = "main";
+
+        VkVertexInputBindingDescription bindingDesc{ 0, 9 * sizeof(float), VK_VERTEX_INPUT_RATE_VERTEX };
+        VkVertexInputAttributeDescription attrDesc[3]{};
+        attrDesc[0] = { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0 };
+        attrDesc[1] = { 1, 0, VK_FORMAT_R32G32B32_SFLOAT, 3 * sizeof(float) };
+        attrDesc[2] = { 2, 0, VK_FORMAT_R32G32B32_SFLOAT, 6 * sizeof(float) };
+
+        VkPipelineVertexInputStateCreateInfo vertexInputInfo{ VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
+        vertexInputInfo.vertexBindingDescriptionCount = 1;
+        vertexInputInfo.pVertexBindingDescriptions = &bindingDesc;
+        vertexInputInfo.vertexAttributeDescriptionCount = 3;
+        vertexInputInfo.pVertexAttributeDescriptions = attrDesc;
+
+        VkPipelineInputAssemblyStateCreateInfo inputAssembly{ VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
+        inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+        VkPipelineViewportStateCreateInfo viewportState{ VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
+        viewportState.viewportCount = 1;
+        viewportState.scissorCount = 1;
+
+        VkPipelineRasterizationStateCreateInfo rasterizer{ VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
+        rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+        rasterizer.lineWidth = 1.0f;
+        rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+        rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+
+        VkPipelineMultisampleStateCreateInfo multisampling{ VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
+        multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+        VkPipelineDepthStencilStateCreateInfo depthStencil{ VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
+        depthStencil.depthTestEnable = VK_TRUE;
+        depthStencil.depthWriteEnable = VK_TRUE;
+        depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+        depthStencil.depthBoundsTestEnable = VK_FALSE;
+        depthStencil.stencilTestEnable = VK_FALSE;
+
+        VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+        colorBlendAttachment.colorWriteMask = 0xF;
+
+        VkPipelineColorBlendStateCreateInfo colorBlending{ VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
+        colorBlending.attachmentCount = 1;
+        colorBlending.pAttachments = &colorBlendAttachment;
+
+        VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+        VkPipelineDynamicStateCreateInfo dynamicState{ VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
+        dynamicState.dynamicStateCount = 2;
+        dynamicState.pDynamicStates = dynamicStates;
+
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{ VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
         pipelineLayoutInfo.setLayoutCount = 1;
         pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
         vkCreatePipelineLayout(ctx.device, &pipelineLayoutInfo, nullptr, &pipelineLayout);
 
-        auto vertCode = readFile("shaders/dodecahedron.vert.spv");
-        auto fragCode = readFile("shaders/dodecahedron.frag.spv");
-        auto wireCode = readFile("shaders/wireframe.frag.spv");
+        VkGraphicsPipelineCreateInfo pipelineInfo{ VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
+        pipelineInfo.stageCount = 2;
+        pipelineInfo.pStages = shaderStages;
+        pipelineInfo.pVertexInputState = &vertexInputInfo;
+        pipelineInfo.pInputAssemblyState = &inputAssembly;
+        pipelineInfo.pViewportState = &viewportState;
+        pipelineInfo.pRasterizationState = &rasterizer;
+        pipelineInfo.pMultisampleState = &multisampling;
+        pipelineInfo.pDepthStencilState = &depthStencil;
+        pipelineInfo.pColorBlendState = &colorBlending;
+        pipelineInfo.pDynamicState = &dynamicState;
+        pipelineInfo.layout = pipelineLayout;
+        pipelineInfo.renderPass = ctx.render_pass;
+        pipelineInfo.subpass = 0;
 
-        VkShaderModule vertModule = createShaderModule(vertCode);
-        VkShaderModule fragModule = createShaderModule(fragCode);
-        VkShaderModule wireModule = createShaderModule(wireCode);
+        if (vkCreateGraphicsPipelines(ctx.device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipelineFill) != VK_SUCCESS) {
+            std::cerr << "Failed to create pipeline!" << std::endl;
+            return false;
+        }
 
-        pipelineFill = createPipeline(vertModule, fragModule, VK_POLYGON_MODE_FILL);
-        pipelineWire = createPipeline(vertModule, wireModule, VK_POLYGON_MODE_LINE);
-
-        vkDestroyShaderModule(ctx.device, wireModule, nullptr);
         vkDestroyShaderModule(ctx.device, fragModule, nullptr);
         vkDestroyShaderModule(ctx.device, vertModule, nullptr);
 
@@ -271,7 +258,6 @@ namespace application {
         vkQueueWaitIdle(ctx.graphics_queue);
 
         vkDestroyPipeline(ctx.device, pipelineFill, nullptr);
-        vkDestroyPipeline(ctx.device, pipelineWire, nullptr);
         vkDestroyPipelineLayout(ctx.device, pipelineLayout, nullptr);
         vkDestroyDescriptorPool(ctx.device, descriptorPool, nullptr);
         vkDestroyDescriptorSetLayout(ctx.device, descriptorSetLayout, nullptr);
@@ -281,32 +267,63 @@ namespace application {
     }
 
     void update([[maybe_unused]] double time) {
-        static float rotationAngle = 0.0f;
-        static float scaleFactor = 0.6f;
-        static bool isPaused = false;
+        static float pos[3] = { 0.0f, 0.0f, 0.0f };
+        static float rot[3] = { 0.0f, 0.0f, 0.0f };
+        static float scale[3] = { 0.6f, 0.6f, 0.6f };
+        static float uiColor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
 
-        ImGui::Checkbox("Slow down animation", &isPaused);
-        if (!isPaused) {
-            rotationAngle += 0.01f;
-        }
+        static bool useOrtho = false;
+        static bool isPaused = false;
+        static float animSpeed = 1.0f;
+        static float trajRadius = 1.5f;
+        static float animTime = 0.0f;
+
         ImGui::Begin("Dodecahedron Controls");
-        ImGui::SliderFloat("Rotation", &rotationAngle, 0.0f, 6.28f);
-        ImGui::SliderFloat("Scale", &scaleFactor, 0.1f, 2.0f);
+        ImGui::Checkbox("Orthographic Projection", &useOrtho);
+        ImGui::Checkbox("Pause Animation", &isPaused);
+        ImGui::ColorEdit3("Object Color", uiColor);
+
+        ImGui::Separator();
+        ImGui::SliderFloat3("Position", pos, -5.0f, 5.0f);
+        ImGui::SliderFloat3("Rotation", rot, -3.14f, 3.14f);
+        ImGui::SliderFloat3("Scale", scale, 0.1f, 2.0f);
+
+        ImGui::Separator();
+        ImGui::SliderFloat("Anim Speed", &animSpeed, 0.0f, 3.0f);
+        ImGui::SliderFloat("Trajectory Radius", &trajRadius, 0.0f, 4.0f);
+
         ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
         ImGui::End();
 
-        rotationAngle += 0.01f;
+        if (!isPaused) {
+            animTime += 0.016f * animSpeed;
+        }
 
         auto& ctx = graphics::internal::context;
         float aspect = (float)ctx.swapchain_extent.width / (float)ctx.swapchain_extent.height;
 
+        float orbitX = cos(animTime) * trajRadius;
+        float orbitZ = sin(animTime * 1.5f) * trajRadius;
+
         UniformBufferObject ubo{};
-        ubo.model = glm::rotate(glm::mat4(1.0f), rotationAngle, glm::vec3(0.0f, 1.0f, 0.0f));
-        ubo.model = glm::rotate(ubo.model, rotationAngle * 0.5f, glm::vec3(1.0f, 0.0f, 0.0f));
-        ubo.model = glm::scale(ubo.model, glm::vec3(scaleFactor));
-        ubo.view = glm::lookAt(glm::vec3(0.0f, 0.0f, 4.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-        ubo.proj = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
+        ubo.model = glm::mat4(1.0f);
+        ubo.model = glm::translate(ubo.model, glm::vec3(pos[0] + orbitX, pos[1], pos[2] + orbitZ));
+        ubo.model = glm::rotate(ubo.model, rot[0] + animTime, glm::vec3(1.0f, 0.0f, 0.0f));
+        ubo.model = glm::rotate(ubo.model, rot[1] + animTime * 0.5f, glm::vec3(0.0f, 1.0f, 0.0f));
+        ubo.model = glm::rotate(ubo.model, rot[2], glm::vec3(0.0f, 0.0f, 1.0f));
+        ubo.model = glm::scale(ubo.model, glm::vec3(scale[0], scale[1], scale[2]));
+
+        ubo.view = glm::lookAt(glm::vec3(0.0f, 0.0f, 6.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+
+        if (useOrtho) {
+            ubo.proj = glm::orthoRH_ZO(-aspect * 4.0f, aspect * 4.0f, -4.0f, 4.0f, 0.1f, 100.0f);
+        }
+        else {
+            ubo.proj = glm::perspectiveRH_ZO(glm::radians(45.0f), aspect, 0.1f, 100.0f);
+        }
         ubo.proj[1][1] *= -1.0f;
+
+        ubo.uiColor = glm::vec4(uiColor[0], uiColor[1], uiColor[2], 1.0f);
 
         memcpy(uniformBufferMapped, &ubo, sizeof(ubo));
         vmaFlushAllocation(ctx.allocator, uniformAlloc, 0, VK_WHOLE_SIZE);
@@ -344,9 +361,6 @@ namespace application {
         vkCmdBindVertexBuffers(cmd, 0, 1, &vertexBuffer, offsets);
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineFill);
-        vkCmdDraw(cmd, vertexCount, 1, 0, 0);
-
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineWire);
         vkCmdDraw(cmd, vertexCount, 1, 0, 0);
 
         vkCmdEndRenderPass(cmd);
